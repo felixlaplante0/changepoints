@@ -49,7 +49,5 @@ print(f"Second run (cached): {end - start:.4f} s")  # 0.8 second
 plt.plot(signal)
 for i in model.chgpts:
     plt.axvline(x=i, color="r")
-```
 plt.show()
-
 ```
