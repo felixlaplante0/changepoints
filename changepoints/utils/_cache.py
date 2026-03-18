@@ -7,10 +7,10 @@ import numpy as np
 T = TypeVar("T")
 
 
-def np_cache(func: Callable[..., Any]) -> Callable[..., Any]:
-    cache: dict[tuple[int, ...], Any] = {}
+def np_cache(func: Callable[..., T]) -> Callable[..., T]:
+    cache: dict[tuple[int, ...], T] = {}
 
-    def wrapper(*args: Any) -> Any:
+    def wrapper(*args: Any) -> T:
         key = tuple(hash(arr.tobytes()) for arr in args if isinstance(arr, np.ndarray))
         if key not in cache:
             cache[key] = func(*args)
