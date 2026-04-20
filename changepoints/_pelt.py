@@ -1,4 +1,4 @@
-from collections.abc import Callable
+etafrom collections.abc import Callable
 from numbers import Real
 from typing import Any, Self
 
@@ -19,20 +19,20 @@ class PELT(BaseEstimator):
 
     Attributes:
         cost (type[BaseCost]): The cost to use.
-        beta (float): The penalty.
+        penalty (float): The penalty.
         num_threads (int): The number of threads to use.
         kwargs (Any): Key word arguments used when needed by the base cost.
     """
 
     cost: type[BaseCost]
-    beta: float
+    penalty: float
     num_threads: int
     kwargs: Any
 
     @validate_params(
         {
             "cost": [type],
-            "beta": [Interval(Real, 0, None, closed="left")],
+            "penalty": [Interval(Real, 0, None, closed="left")],
             "num_threads": [Interval(Integral, 1, None, closed="left"), None],
         },
         prefer_skip_nested_validation=True,
@@ -40,7 +40,7 @@ class PELT(BaseEstimator):
     def __init__(
         self,
         cost: type[BaseCost] = GaussianMeanCost,
-        beta: float = 1,
+        penalty: float = 1,
         *,
         num_threads: int | None = None,
         **kwargs: Any,
@@ -50,7 +50,7 @@ class PELT(BaseEstimator):
         Args:
             cost (type[BaseCost], optional): The cost function to use. Defaults to
                 GaussianMeanCost.
-            beta (float, optional): The penalty parameter. Defaults to 1.0.
+            penalty (float, optional): The penalty parameter. Defaults to 1.0.
             num_threads (int | None, optional): The number of threads to use. If left to
                 None, this is computed as the number of available processors divided by
                 2. Defaults to None.
@@ -58,7 +58,7 @@ class PELT(BaseEstimator):
 
         """
         self.cost = cost
-        self.beta = beta
+        self.penalty = penalty
         self.num_threads = (
             max(1, config.NUMBA_NUM_THREADS // 2)
             if num_threads is None
@@ -129,7 +129,7 @@ class PELT(BaseEstimator):
             write(buffer, min_costs, start, t)
 
             idx = start + np.argmin(buffer[start:t])
-            min_costs[t] = (m := buffer[idx] + self.beta)
+            min_costs[t] = (m := buffer[idx] + self.penalty)
             chgpts[t] = idx
 
             while buffer[start] > m:
