@@ -4,7 +4,7 @@ description = "Changepoint detection made easy and efficient with numba"
 readme = "README.md"
 urls = { "Source" = "https://gitlab.com/felixlaplante0/changepoints" }
 authors = [{ name = "Félix Laplante" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["numpy", "numba", "scikit-learn"]
 dynamic = ["version"]
 classifiers = [
