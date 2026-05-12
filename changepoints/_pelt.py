@@ -1,4 +1,4 @@
-etafrom collections.abc import Callable
+from collections.abc import Callable
 from numbers import Real
 from typing import Any, Self
 
