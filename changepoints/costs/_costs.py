@@ -1,7 +1,10 @@
+from collections.abc import Callable
 from typing import Protocol
 
 import numpy as np
 from numba import njit
+
+_LINEAR_TOL = 1e-14
 
 
 class BaseCost(Protocol):
@@ -24,6 +27,56 @@ class BaseCost(Protocol):
             t (int): The current time.
         """
         ...
+
+    def dust(self, costs: np.ndarray, r: int, s: int, t: int) -> bool:
+        """Return whether DUST can safely prune ``s`` using ``r``."""
+        ...
+
+
+def _dust_test(
+    statistic: np.ndarray,
+    base: np.ndarray,
+    minimum: Callable[[float], float],
+    mean: Callable[[float], float],
+    lower: float,
+    upper: float,
+):
+    """Build the common one-parameter DUST decision test."""
+
+    @njit(fastmath=True)  # type: ignore
+    def _test(costs: np.ndarray, r: int, s: int, t: int) -> bool:
+        qt, qs, qr = costs[t], costs[s], costs[r]
+        if base.size:
+            qt += base[0] - base[t]
+            qs += base[0] - base[s]
+            qr += base[0] - base[r]
+        a = (statistic[t] - statistic[s]) / (t - s)
+        b = (statistic[s] - statistic[r]) / (s - r)
+        c = (qt - qs) / (t - s)
+        d = (qs - qr) / (s - r)
+        ds = a - b
+        dq = c - d
+        if minimum(a) - c > 0.0:
+            return True
+        if abs(ds) < _LINEAR_TOL:
+            return dq < 0.0
+
+        theta = -dq / ds
+        m = mean(theta)
+        x = (m - a) / ds
+        if np.isfinite(x) and x > 0.0 and lower <= m <= upper:
+            return minimum(m) - c - x * dq > 0.0
+
+        boundary = upper if ds > 0.0 else lower
+        if np.isfinite(boundary):
+            x = (boundary - a) / ds
+            return x > 0.0 and minimum(boundary) - c - x * dq > 0.0
+
+        # The positive-domain models have logarithmic upper tails. If their
+        # unconstrained maximizer is at infinity, the decision diverges.
+        return ds > 0.0 and dq <= 0.0
+
+    return _test
 
 
 class GaussianMeanCost(BaseCost):
@@ -51,6 +104,18 @@ class GaussianMeanCost(BaseCost):
 
         self.__call__ = _cost
 
+        @njit(fastmath=True)  # type: ignore
+        def _minimum(x: float) -> float:
+            return -(x * x)
+
+        @njit(fastmath=True)  # type: ignore
+        def _mean(theta: float) -> float:
+            return theta / 2.0
+
+        self.dust = _dust_test(
+            cumsum[:, 0], cumsum2[:, 0], _minimum, _mean, -np.inf, np.inf
+        )
+
 
 class GaussianVarianceCost(BaseCost):
     def __init__(self, X: np.ndarray):
@@ -74,6 +139,18 @@ class GaussianVarianceCost(BaseCost):
             return s + min_cost
 
         self.__call__ = _cost
+
+        @njit(fastmath=True)  # type: ignore
+        def _minimum(x: float) -> float:
+            return np.log(x + 1e-8) + 1.0
+
+        @njit(fastmath=True)  # type: ignore
+        def _mean(theta: float) -> float:
+            return -1.0 / theta if theta < 0.0 else np.nan
+
+        self.dust = _dust_test(
+            cumsum2[:, 0], np.empty(0), _minimum, _mean, 0.0, np.inf
+        )
 
 
 class GaussianMeanVarianceCost(BaseCost):
@@ -126,6 +203,18 @@ class PoissonCost(BaseCost):
 
         self.__call__ = _cost
 
+        @njit(fastmath=True)  # type: ignore
+        def _minimum(x: float) -> float:
+            return x - x * np.log(x + 1e-8)
+
+        @njit(fastmath=True)  # type: ignore
+        def _mean(theta: float) -> float:
+            return np.exp(theta)
+
+        self.dust = _dust_test(
+            cumsum[:, 0], np.empty(0), _minimum, _mean, 0.0, np.inf
+        )
+
 
 class GeometricCost(BaseCost):
     def __init__(self, X: np.ndarray):
@@ -154,6 +243,19 @@ class GeometricCost(BaseCost):
 
         self.__call__ = _cost
 
+        @njit(fastmath=True)  # type: ignore
+        def _minimum(x: float) -> float:
+            p = 1.0 / x
+            return -np.log(p + 1e-8) - (x - 1.0) * np.log1p(1e-8 - p)
+
+        @njit(fastmath=True)  # type: ignore
+        def _mean(theta: float) -> float:
+            return 1.0 / (1.0 - np.exp(theta)) if theta < 0.0 else np.nan
+
+        self.dust = _dust_test(
+            cumsum[:, 0], np.empty(0), _minimum, _mean, 1.0, np.inf
+        )
+
 
 class ExponentialCost(BaseCost):
     def __init__(self, X: np.ndarray):
@@ -177,6 +279,18 @@ class ExponentialCost(BaseCost):
             return s + min_cost
 
         self.__call__ = _cost
+
+        @njit(fastmath=True)  # type: ignore
+        def _minimum(x: float) -> float:
+            return np.log(x + 1e-8)
+
+        @njit(fastmath=True)  # type: ignore
+        def _mean(theta: float) -> float:
+            return -1.0 / theta if theta < 0.0 else np.nan
+
+        self.dust = _dust_test(
+            cumsum[:, 0], np.empty(0), _minimum, _mean, 0.0, np.inf
+        )
 
 
 class GammaCost(BaseCost):
@@ -207,6 +321,23 @@ class GammaCost(BaseCost):
 
         self.__call__ = _cost
 
+        @njit(fastmath=True)  # type: ignore
+        def _minimum(x: float) -> float:
+            return k * np.log(x / k + 1e-8) + k
+
+        @njit(fastmath=True)  # type: ignore
+        def _mean(theta: float) -> float:
+            return -k / theta if theta < 0.0 else np.nan
+
+        self.dust = _dust_test(
+            cumsum[:, 0],
+            (1.0 - k) * cumsum_log[:, 0],
+            _minimum,
+            _mean,
+            0.0,
+            np.inf,
+        )
+
 
 class BinomialCost(BaseCost):
     def __init__(self, X: np.ndarray, m: int = 1):
@@ -236,6 +367,23 @@ class BinomialCost(BaseCost):
 
         self.__call__ = _cost
 
+        @njit(fastmath=True)  # type: ignore
+        def _minimum(x: float) -> float:
+            p = x / m
+            return -x * np.log(p + 1e-8) - (m - x) * np.log1p(1e-8 - p)
+
+        @njit(fastmath=True)  # type: ignore
+        def _mean(theta: float) -> float:
+            if theta >= 0.0:
+                z = np.exp(-theta)
+                return m / (1.0 + z)
+            z = np.exp(theta)
+            return m * z / (1.0 + z)
+
+        self.dust = _dust_test(
+            cumsum[:, 0], np.empty(0), _minimum, _mean, 0.0, float(m)
+        )
+
 
 class NegativeBinomialCost(BaseCost):
     def __init__(self, X: np.ndarray, r: int = 1):
@@ -264,3 +412,19 @@ class NegativeBinomialCost(BaseCost):
             return s + min_cost
 
         self.__call__ = _cost
+
+        @njit(fastmath=True)  # type: ignore
+        def _minimum(x: float) -> float:
+            p = r / (r + x)
+            return -r * np.log(p + 1e-8) - x * np.log1p(1e-8 - p)
+
+        @njit(fastmath=True)  # type: ignore
+        def _mean(theta: float) -> float:
+            if theta >= 0.0:
+                return np.nan
+            z = np.exp(theta)
+            return r * z / (1.0 - z)
+
+        self.dust = _dust_test(
+            cumsum[:, 0], np.empty(0), _minimum, _mean, 0.0, np.inf
+        )
